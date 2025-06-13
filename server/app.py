@@ -8,6 +8,8 @@ import time
 import traceback
 import requests
 import math
+import numpy as np
+import joblib
 
 load_dotenv()
 app = Flask(__name__)
@@ -51,7 +53,6 @@ def is_valid_number(val):
     except:
         return False
 
-# Endpoint to return latest sensor reading
 @app.route("/data")
 def get_data():
     try:
@@ -60,19 +61,63 @@ def get_data():
     except Exception:
         return jsonify({"value": 0.0})
 
-# Function to call Gemini via REST API
+# Lab tested values (used in ML and Gemini)
+LAB_TESTED_PH = 7.2
+LAB_TESTED_TDS = 500
+EQUIPMENT_DEPTH = 2.0  # meters
+FILTER_FLOW = 4.5      # L/min
+
+# Load model and scaler
+model = joblib.load('filter_lifespan_xgb_model.pkl')
+scaler = joblib.load('filter_scaler.pkl')
+
+@app.route('/predict', methods=['POST'])
+def predict_filter_lifespan():
+    data = request.get_json()
+    try:
+        turbidity = data.get('turbidity')
+        if turbidity is None:
+            return jsonify({'error': 'Turbidity value is required'}), 400
+
+        input_features = np.array([[LAB_TESTED_TDS, turbidity, LAB_TESTED_PH, EQUIPMENT_DEPTH, FILTER_FLOW]])
+        scaled_input = scaler.transform(input_features)
+        predicted_life = model.predict(scaled_input)[0]
+
+        return jsonify({
+            'predicted_life_hours': round(float(predicted_life), 2)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+# Gemini analysis generator
 def generate_gemini_insight(turbidity_data):
+    average = round(np.mean(turbidity_data), 2)
+
+    # Predict using ML model
+    input_features = np.array([[LAB_TESTED_TDS, average, LAB_TESTED_PH, EQUIPMENT_DEPTH, FILTER_FLOW]])
+    scaled_input = scaler.transform(input_features)
+    prediction = model.predict(scaled_input)[0]
+    prediction = round(float(prediction), 2)
+
     prompt = f"""
-You are a smart water quality expert who is part of an algae-based nanoparticle filtration system. Analyze this turbidity data collected every second for 2 minutes:
+You are analyzing real-time water turbidity and quality data from a smart monitoring system using an algae-based nanoparticle filter.
 
-{turbidity_data}
+Context:
+- Average turbidity over 2 minutes: {average} NTU
+- ML features used:
+    • pH: {LAB_TESTED_PH}
+    • TDS: {LAB_TESTED_TDS}
+    • Depth: {EQUIPMENT_DEPTH} m
+    • Flow rate: {FILTER_FLOW} L/min
+- ML Prediction: Estimated filter lifespan = {prediction} hours
 
-Your tasks:
-- Mention average turbidity and interpret it clearly
-- Identify whether water quality is improving or degrading
-- Predict if the filter is wearing out or has already worn out
-- Give a conversational, detailed explanation like you're speaking to a common man about a water quality demo
-- Add preventive suggestions and impress them with your analysis
+Generate a concise technical report for experts, covering:
+1. Overall trend in turbidity (avoid detailed per-second breakdown).
+2. Interpretation of the ML prediction in context of water properties.
+3. Clear conclusion: Is the filter performing well or degrading?
+4. Actionable preventive maintenance suggestions for sustaining or improving filter efficiency.
+
+Avoid analogies, storytelling, or basic turbidity explanations. Keep it professional and insight-focused.
 """
 
     payload = {
@@ -96,7 +141,6 @@ Your tasks:
 
     return "Failed to get analysis from Gemini API."
 
-# Endpoint to post turbidity data for Gemini insight
 @app.route('/gemini', methods=['POST'])
 def gemini_analysis():
     try:
@@ -117,5 +161,5 @@ def gemini_analysis():
         traceback.print_exc()
         return jsonify({"error": "Gemini analysis failed"}), 500
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)

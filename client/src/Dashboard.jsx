@@ -9,6 +9,7 @@ export default function Dashboard() {
   const [dataPoints, setDataPoints] = useState([]);
   const [secondsElapsed, setSecondsElapsed] = useState(0);
   const [geminiResult, setGeminiResult] = useState(null);
+  const [mlPrediction, setMlPrediction] = useState(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -29,39 +30,62 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (secondsElapsed === 10) {
-      const valuesOnly = dataPoints.map(dp => dp.value);
-      console.log("🚀 Triggering Gemini POST with data:", valuesOnly);
+  if (secondsElapsed === 120) {
+    const valuesOnly = dataPoints.map(dp => dp.value);
+    console.log("🚀 Triggering Gemini POST with data:", valuesOnly);
 
-      fetch('http://127.0.0.1:5000/gemini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: valuesOnly })
-      })
-        .then(async res => {
-          const text = await res.text();
-          console.log("📩 Raw response from Gemini:", text);
+    // Gemini POST
+    fetch('http://127.0.0.1:5000/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: valuesOnly })
+    })
+      .then(async res => {
+        const text = await res.text();
+        console.log("📩 Raw response from Gemini:", text);
 
-          try {
-            const json = JSON.parse(text);
-            if (json.analysis) {
-              console.log("✅ Gemini analysis received:", json.analysis);
-              setGeminiResult(json.analysis);
-            } else {
-              console.error("❌ Gemini returned unexpected structure:", json);
-              setGeminiResult(json.error || "No insights found.");
-            }
-          } catch (e) {
-            console.error("❌ Failed to parse JSON from Gemini:", e, text);
-            setGeminiResult("Gemini returned malformed response.");
+        try {
+          const json = JSON.parse(text);
+          if (json.analysis) {
+            console.log("✅ Gemini analysis received:", json.analysis);
+            setGeminiResult(json.analysis);
+          } else {
+            console.error("❌ Gemini returned unexpected structure:", json);
+            setGeminiResult(json.error || "No insights found.");
           }
+        } catch (e) {
+          console.error("❌ Failed to parse JSON from Gemini:", e, text);
+          setGeminiResult("Gemini returned malformed response.");
+        }
+      })
+      .catch(err => {
+        console.error("🚨 Network error contacting Gemini:", err);
+        setGeminiResult("Error fetching Gemini insights.");
+      });
+
+    // Delay ML prediction by 2 seconds
+    setTimeout(() => {
+      if (turbidity !== null) {
+        console.log("🔍 Calling ML /predict with turbidity after 2s delay:", turbidity);
+        fetch('http://127.0.0.1:5000/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ turbidity })
         })
-        .catch(err => {
-          console.error("🚨 Network error contacting Gemini:", err);
-          setGeminiResult("Error fetching Gemini insights.");
-        });
-    }
-  }, [secondsElapsed, dataPoints]);
+          .then(res => res.json())
+          .then(data => {
+            console.log("✅ ML Prediction Result:", data);
+            setMlPrediction(data.predicted_life_hours || "No prediction returned");
+          })
+          .catch(err => {
+            console.error("❌ Error calling ML /predict:", err);
+            setMlPrediction("Error fetching prediction");
+          });
+      }
+    }, 2000);
+  }
+}, [secondsElapsed, dataPoints, turbidity]);
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white font-sans flex flex-col items-center justify-center p-6 relative overflow-hidden w-full">
@@ -140,7 +164,33 @@ export default function Dashboard() {
         {/* Insights Section */}
         <div className="flex flex-col gap-8 max-w-4xl mx-auto">
 
-          {/* Gemini */}
+          {/* ML Card - moved above */}
+          <div className="bg-gradient-to-br from-indigo-900/40 via-blue-900/40 to-cyan-900/40 backdrop-blur-xl border border-cyan-500/30 rounded-3xl p-8 shadow-2xl hover:shadow-cyan-500/25 transition-all duration-500 hover:scale-105 hover:-translate-y-2">
+            <div className="text-center">
+              <div className="text-5xl mb-4">📊</div>
+              <h3 className="text-2xl font-bold mb-4 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+                ML Predictions
+              </h3>
+              {mlPrediction !== null ? (
+                <p className="text-green-300 text-xl font-mono">
+                  🧠 Estimated Filter Lifespan: <strong>{mlPrediction} hours</strong>
+                </p>
+              ) : (
+                <p className="text-gray-300 text-lg leading-relaxed">
+                  {secondsElapsed < 120
+                    ? `Collecting data... ${120 - secondsElapsed}s left for ML prediction.`
+                    : "Generating prediction..."}
+                </p>
+              )}
+              <div className="mt-6 flex justify-center space-x-2">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                <div className="w-2 h-2 bg-teal-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Gemini Card */}
           <div className="bg-gradient-to-br from-purple-900/40 via-pink-900/40 to-red-900/40 backdrop-blur-xl border border-purple-500/30 rounded-3xl p-8 shadow-2xl hover:shadow-purple-500/25 transition-all duration-500 hover:scale-105 hover:-translate-y-2">
             <div className="text-center">
               <div className="text-5xl mb-4">🤖</div>
@@ -165,24 +215,6 @@ export default function Dashboard() {
                 <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce"></div>
                 <div className="w-2 h-2 bg-pink-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                 <div className="w-2 h-2 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-              </div>
-            </div>
-          </div>
-
-          {/* ML Card */}
-          <div className="bg-gradient-to-br from-indigo-900/40 via-blue-900/40 to-cyan-900/40 backdrop-blur-xl border border-cyan-500/30 rounded-3xl p-8 shadow-2xl hover:shadow-cyan-500/25 transition-all duration-500 hover:scale-105 hover:-translate-y-2">
-            <div className="text-center">
-              <div className="text-5xl mb-4">📊</div>
-              <h3 className="text-2xl font-bold mb-4 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-                ML Predictions
-              </h3>
-              <p className="text-gray-300 text-lg leading-relaxed">
-                Machine learning models predict contamination levels and future trends using historical data for proactive water management.
-              </p>
-              <div className="mt-6 flex justify-center space-x-2">
-                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                <div className="w-2 h-2 bg-teal-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
               </div>
             </div>
           </div>
